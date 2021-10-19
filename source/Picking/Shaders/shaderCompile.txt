@@ -1,0 +1,2 @@
+fxc “Default.hlsl” /Od /Zi /T vs_5_1 /E “VS” /Fo “Default_vs.cso” /Fc “Default_vs.asm”
+ fxc “Default.hlsl” /Od /Zi /T ps_5_1 /E “PS” /Fo “Default_ps.cso” /Fc “Default_ps.asm”

@@ -260,6 +260,9 @@ struct Material
 	DirectX::XMFLOAT4 DiffuseAlbedo = { 1.0f, 1.0f, 1.0f, 1.0f };
 	DirectX::XMFLOAT3 FresnelR0 = { 0.01f, 0.01f, 0.01f };
 	float Roughness = .25f;
+    float Specular = 0.0f;
+    float Metalic = 0.0f;
+
 	DirectX::XMFLOAT4X4 MatTransform = MathHelper::Identity4x4();
 };
 

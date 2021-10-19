@@ -7,6 +7,7 @@
 #include "../../Common/UploadBuffer.h"
 #include "../../Common/GeometryGenerator.h"
 #include "../../Common/Camera.h"
+#include "FbxLoader.h"
 #include "RenderTarget.h"
 #include "SobelFilter.h"
 #include "FrameResource.h"
@@ -65,6 +66,7 @@ enum class RenderLayer : int
 {
 	Opaque = 0,
 	Highlight,
+	Sky,
 	Count
 };
 
@@ -100,6 +102,8 @@ private:
 	void BuildDescriptorHeaps();
     void BuildShadersAndInputLayout();
     void BuildCarGeometry();
+	void BuildCustomGeometry();
+	void BuildShapeGeometry();
     void BuildPSOs();
     void BuildFrameResources();
     void BuildMaterials();
@@ -141,6 +145,8 @@ private:
 
 	// Render items divided by PSO.
 	std::vector<RenderItem*> mRitemLayer[(int)RenderLayer::Count];
+
+	UINT mSkyTexHeapIndex = 0;
 
 	RenderItem* mPickedRitem = nullptr;
 
@@ -220,7 +226,9 @@ bool PickingApp::Initialize()
 	BuildPostProcessRootSignature();
 	BuildDescriptorHeaps();
     BuildShadersAndInputLayout();
+	BuildShapeGeometry();
     BuildCarGeometry();
+	BuildCustomGeometry();
 	BuildMaterials();
     BuildRenderItems();
     BuildFrameResources();
@@ -322,10 +330,24 @@ void PickingApp::Draw(const GameTimer& gt)
     // The root signature knows how many descriptors are expected in the table.
 	mCommandList->SetGraphicsRootDescriptorTable(3, mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
+	// Bind the sky cube map.  For our demos, we just use one "world" cube map representing the environment
+	// from far away, so all objects will use the same cube map and we only need to set it once per-frame.  
+	// If we wanted to use "local" cube maps, we would have to change them per-object, or dynamically
+	// index into an array of cube maps.
+
+	CD3DX12_GPU_DESCRIPTOR_HANDLE skyTexDescriptor(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	skyTexDescriptor.Offset(mSkyTexHeapIndex, mCbvSrvDescriptorSize);
+	mCommandList->SetGraphicsRootDescriptorTable(4, skyTexDescriptor);
+
     DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Opaque]);
 
 	mCommandList->SetPipelineState(mPSOs["highlight"].Get());
 	DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Highlight]);
+
+	mCommandList->SetPipelineState(mPSOs["sky"].Get());
+	DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Sky]);
+
+	
 
     // Indicate a state transition on the resource usage.
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mOffscreenRT->Resource(),
@@ -333,7 +355,7 @@ void PickingApp::Draw(const GameTimer& gt)
 
 	mSobelFilter->Execute(mCommandList.Get(), mPostProcessRootSignature.Get(),
 		mPSOs["sobel"].Get(), mOffscreenRT->Srv());
-
+	
 	// Indicate a state transition on the resource usage.
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
 		D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
@@ -347,10 +369,15 @@ void PickingApp::Draw(const GameTimer& gt)
 	mCommandList->SetGraphicsRootDescriptorTable(1, mSobelFilter->OutputSrv());
 	
 	DrawFullscreenQuad(mCommandList.Get());
+	
+
+
+	
 
 	// Indicate a state transition on the resource usage.
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
 		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+	
 
     // Done recording commands.
     ThrowIfFailed(mCommandList->Close());
@@ -413,16 +440,16 @@ void PickingApp::OnKeyboardInput(const GameTimer& gt)
 	const float dt = gt.DeltaTime();
 
 	if(GetAsyncKeyState('W') & 0x8000)
-		mCamera.Walk(10.0f*dt);
+		mCamera.Walk(100.0f*dt);
 
 	if(GetAsyncKeyState('S') & 0x8000)
-		mCamera.Walk(-10.0f*dt);
+		mCamera.Walk(-100.0f*dt);
 
 	if(GetAsyncKeyState('A') & 0x8000)
-		mCamera.Strafe(-10.0f*dt);
+		mCamera.Strafe(-100.0f*dt);
 
 	if(GetAsyncKeyState('D') & 0x8000)
-		mCamera.Strafe(10.0f*dt);
+		mCamera.Strafe(100.0f*dt);
 
 	mCamera.UpdateViewMatrix();
 }
@@ -473,6 +500,8 @@ void PickingApp::UpdateMaterialBuffer(const GameTimer& gt)
 			matData.DiffuseAlbedo = mat->DiffuseAlbedo;
 			matData.FresnelR0 = mat->FresnelR0;
 			matData.Roughness = mat->Roughness;
+			matData.Specular = mat->Specular;
+			matData.Metalic = mat->Metalic;
 			XMStoreFloat4x4(&matData.MatTransform, XMMatrixTranspose(matTransform));
 			matData.DiffuseMapIndex = mat->DiffuseSrvHeapIndex;
 
@@ -521,14 +550,36 @@ void PickingApp::UpdateMainPassCB(const GameTimer& gt)
 
 void PickingApp::LoadTextures()
 {
-	auto defaultDiffuseTex = std::make_unique<Texture>();
-	defaultDiffuseTex->Name = "defaultDiffuseTex";
-	defaultDiffuseTex->Filename = L"../../Textures/white1x1.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), defaultDiffuseTex->Filename.c_str(),
-		defaultDiffuseTex->Resource, defaultDiffuseTex->UploadHeap));
 	
-	mTextures[defaultDiffuseTex->Name] = std::move(defaultDiffuseTex);
+
+
+	std::vector<std::string> texNames =
+	{
+		"bricksDiffuseMap",
+		//"tileDiffuseMap",
+		//"defaultDiffuseMap",
+		"skyCubeMap"
+	};
+
+	std::vector<std::wstring> texFilenames =
+	{
+		L"../../Textures/bricks2.dds",
+		//L"../../Textures/tile.dds",
+		//L"../../Textures/white1x1.dds",
+		L"../../Textures/grasscube1024.dds"
+	};
+
+	for (int i = 0; i < (int)texNames.size(); ++i)
+	{
+		auto texMap = std::make_unique<Texture>();
+		texMap->Name = texNames[i];
+		texMap->Filename = texFilenames[i];
+		ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
+			mCommandList.Get(), texMap->Filename.c_str(),
+			texMap->Resource, texMap->UploadHeap));
+
+		mTextures[texMap->Name] = std::move(texMap);
+	}
 }
 
 void PickingApp::BuildRootSignature()
@@ -536,20 +587,24 @@ void PickingApp::BuildRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE texTable;
 	texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0);
 
+	CD3DX12_DESCRIPTOR_RANGE cubemapTable;
+	cubemapTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 2);
+
     // Root parameter can be a table, root descriptor or root constants.
-    CD3DX12_ROOT_PARAMETER slotRootParameter[4];
+    CD3DX12_ROOT_PARAMETER slotRootParameter[5];
 
 	// Perfomance TIP: Order from most frequent to least frequent.
     slotRootParameter[0].InitAsConstantBufferView(0);
     slotRootParameter[1].InitAsConstantBufferView(1);
     slotRootParameter[2].InitAsShaderResourceView(0, 1);
 	slotRootParameter[3].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);
-
+	slotRootParameter[4].InitAsDescriptorTable(1,&cubemapTable,D3D12_SHADER_VISIBILITY_PIXEL);
+	
 
 	auto staticSamplers = GetStaticSamplers();
 
     // A root signature is an array of root parameters.
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter,
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(5, slotRootParameter,
 		(UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
@@ -643,7 +698,7 @@ void PickingApp::BuildDescriptorHeaps()
 	// Create the SRV heap.
 	//
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 4;
+	srvHeapDesc.NumDescriptors = 5;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
@@ -653,7 +708,8 @@ void PickingApp::BuildDescriptorHeaps()
 	//
 	CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
-	auto defaultDiffuseTex = mTextures["defaultDiffuseTex"]->Resource;
+	auto defaultDiffuseTex = mTextures["bricksDiffuseMap"]->Resource;
+	auto skyTex = mTextures["skyCubeMap"]->Resource;
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -664,14 +720,26 @@ void PickingApp::BuildDescriptorHeaps()
 	srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
 	md3dDevice->CreateShaderResourceView(defaultDiffuseTex.Get(), &srvDesc, hDescriptor);
 
+	// next descriptor
+	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+	srvDesc.TextureCube.MostDetailedMip = 0;
+	srvDesc.TextureCube.MipLevels = skyTex->GetDesc().MipLevels;
+	srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+	srvDesc.Format = skyTex->GetDesc().Format;
+	md3dDevice->CreateShaderResourceView(skyTex.Get(), &srvDesc, hDescriptor);
+
+	mSkyTexHeapIndex = 1;
+
 	
 	mOffscreenRT->BuildDescriptors(
-		GetCpuSrv(1),
-		GetGpuSrv(1),
-		GetRtv(2));
-	mSobelFilter->BuildDescriptors(
 		GetCpuSrv(2),
 		GetGpuSrv(2),
+		GetRtv(2));
+	mSobelFilter->BuildDescriptors(
+		GetCpuSrv(3),
+		GetGpuSrv(3),
 		mCbvSrvDescriptorSize
 	);
 	
@@ -690,10 +758,14 @@ void PickingApp::BuildShadersAndInputLayout()
 	mShaders["compositeVS"] = d3dUtil::CompileShader(L"Shaders\\Composite.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["compositePS"] = d3dUtil::CompileShader(L"Shaders\\Composite.hlsl", nullptr, "PS", "ps_5_1");
 	mShaders["sobelCS"] = d3dUtil::CompileShader(L"Shaders\\Sobel.hlsl", nullptr, "SobelCS", "cs_5_1");
+
+	mShaders["skyVS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["skyPS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "PS", "ps_5_1");
 	
     mInputLayout =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		
         { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
@@ -792,6 +864,193 @@ void PickingApp::BuildCarGeometry()
 	mGeometries[geo->Name] = std::move(geo);
 }
 
+void PickingApp::BuildCustomGeometry()
+{
+	
+
+	std::vector<std::int32_t> indices;
+	std::vector<Vertex> vertices;
+
+	XMFLOAT3 vMinf3(+MathHelper::Infinity, +MathHelper::Infinity, +MathHelper::Infinity);
+	XMFLOAT3 vMaxf3(-MathHelper::Infinity, -MathHelper::Infinity, -MathHelper::Infinity);
+
+	LoadFBX(&vertices, &indices, &vMaxf3, &vMinf3);
+
+	XMVECTOR vMin = XMLoadFloat3(&vMinf3);
+	XMVECTOR vMax = XMLoadFloat3(&vMaxf3);
+
+
+	BoundingBox bounds;
+	XMStoreFloat3(&bounds.Center, 0.5f * (vMin + vMax));
+	XMStoreFloat3(&bounds.Extents, 0.5f * (vMax - vMin));
+
+	
+
+	
+
+	//
+	// Pack the indices of all the meshes into one index buffer.
+	//
+
+	const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
+
+	const UINT ibByteSize = (UINT)indices.size() * sizeof(std::int32_t);
+
+	auto geo = std::make_unique<MeshGeometry>();
+	geo->Name = "customGeo";
+
+	ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
+	CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
+
+	ThrowIfFailed(D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU));
+	CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices.data(), ibByteSize);
+
+	geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+		mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
+
+	geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+		mCommandList.Get(), indices.data(), ibByteSize, geo->IndexBufferUploader);
+
+	geo->VertexByteStride = sizeof(Vertex);
+	geo->VertexBufferByteSize = vbByteSize;
+	geo->IndexFormat = DXGI_FORMAT_R32_UINT;
+	geo->IndexBufferByteSize = ibByteSize;
+
+	SubmeshGeometry submesh;
+	submesh.IndexCount = (UINT)indices.size();
+	submesh.StartIndexLocation = 0;
+	submesh.BaseVertexLocation = 0;
+	submesh.Bounds = bounds;
+
+	geo->DrawArgs["CustomMesh"] = submesh;
+
+	mGeometries[geo->Name] = std::move(geo);
+}
+
+void PickingApp::BuildShapeGeometry()
+{
+	GeometryGenerator geoGen;
+	GeometryGenerator::MeshData box = geoGen.CreateBox(1.0f, 1.0f, 1.0f, 3);
+	GeometryGenerator::MeshData grid = geoGen.CreateGrid(20.0f, 30.0f, 60, 40);
+	GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 20, 20);
+	GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
+
+	//
+	// We are concatenating all the geometry into one big vertex/index buffer.  So
+	// define the regions in the buffer each submesh covers.
+	//
+
+	// Cache the vertex offsets to each object in the concatenated vertex buffer.
+	UINT boxVertexOffset = 0;
+	UINT gridVertexOffset = (UINT)box.Vertices.size();
+	UINT sphereVertexOffset = gridVertexOffset + (UINT)grid.Vertices.size();
+	UINT cylinderVertexOffset = sphereVertexOffset + (UINT)sphere.Vertices.size();
+
+	// Cache the starting index for each object in the concatenated index buffer.
+	UINT boxIndexOffset = 0;
+	UINT gridIndexOffset = (UINT)box.Indices32.size();
+	UINT sphereIndexOffset = gridIndexOffset + (UINT)grid.Indices32.size();
+	UINT cylinderIndexOffset = sphereIndexOffset + (UINT)sphere.Indices32.size();
+
+	SubmeshGeometry boxSubmesh;
+	boxSubmesh.IndexCount = (UINT)box.Indices32.size();
+	boxSubmesh.StartIndexLocation = boxIndexOffset;
+	boxSubmesh.BaseVertexLocation = boxVertexOffset;
+
+	SubmeshGeometry gridSubmesh;
+	gridSubmesh.IndexCount = (UINT)grid.Indices32.size();
+	gridSubmesh.StartIndexLocation = gridIndexOffset;
+	gridSubmesh.BaseVertexLocation = gridVertexOffset;
+
+	SubmeshGeometry sphereSubmesh;
+	sphereSubmesh.IndexCount = (UINT)sphere.Indices32.size();
+	sphereSubmesh.StartIndexLocation = sphereIndexOffset;
+	sphereSubmesh.BaseVertexLocation = sphereVertexOffset;
+
+	SubmeshGeometry cylinderSubmesh;
+	cylinderSubmesh.IndexCount = (UINT)cylinder.Indices32.size();
+	cylinderSubmesh.StartIndexLocation = cylinderIndexOffset;
+	cylinderSubmesh.BaseVertexLocation = cylinderVertexOffset;
+
+	//
+	// Extract the vertex elements we are interested in and pack the
+	// vertices of all the meshes into one vertex buffer.
+	//
+
+	auto totalVertexCount =
+		box.Vertices.size() +
+		grid.Vertices.size() +
+		sphere.Vertices.size() +
+		cylinder.Vertices.size();
+
+	std::vector<Vertex> vertices(totalVertexCount);
+
+	UINT k = 0;
+	for (size_t i = 0; i < box.Vertices.size(); ++i, ++k)
+	{
+		vertices[k].Pos = box.Vertices[i].Position;
+		vertices[k].Normal = box.Vertices[i].Normal;
+		vertices[k].TexC = box.Vertices[i].TexC;
+	}
+
+	for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k)
+	{
+		vertices[k].Pos = grid.Vertices[i].Position;
+		vertices[k].Normal = grid.Vertices[i].Normal;
+		vertices[k].TexC = grid.Vertices[i].TexC;
+	}
+
+	for (size_t i = 0; i < sphere.Vertices.size(); ++i, ++k)
+	{
+		vertices[k].Pos = sphere.Vertices[i].Position;
+		vertices[k].Normal = sphere.Vertices[i].Normal;
+		vertices[k].TexC = sphere.Vertices[i].TexC;
+	}
+
+	for (size_t i = 0; i < cylinder.Vertices.size(); ++i, ++k)
+	{
+		vertices[k].Pos = cylinder.Vertices[i].Position;
+		vertices[k].Normal = cylinder.Vertices[i].Normal;
+		vertices[k].TexC = cylinder.Vertices[i].TexC;
+	}
+
+	std::vector<std::uint16_t> indices;
+	indices.insert(indices.end(), std::begin(box.GetIndices16()), std::end(box.GetIndices16()));
+	indices.insert(indices.end(), std::begin(grid.GetIndices16()), std::end(grid.GetIndices16()));
+	indices.insert(indices.end(), std::begin(sphere.GetIndices16()), std::end(sphere.GetIndices16()));
+	indices.insert(indices.end(), std::begin(cylinder.GetIndices16()), std::end(cylinder.GetIndices16()));
+
+	const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
+	const UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
+
+	auto geo = std::make_unique<MeshGeometry>();
+	geo->Name = "shapeGeo";
+
+	ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
+	CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
+
+	ThrowIfFailed(D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU));
+	CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices.data(), ibByteSize);
+
+	geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+		mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
+
+	geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+		mCommandList.Get(), indices.data(), ibByteSize, geo->IndexBufferUploader);
+
+	geo->VertexByteStride = sizeof(Vertex);
+	geo->VertexBufferByteSize = vbByteSize;
+	geo->IndexFormat = DXGI_FORMAT_R16_UINT;
+	geo->IndexBufferByteSize = ibByteSize;
+
+	geo->DrawArgs["box"] = boxSubmesh;
+	geo->DrawArgs["grid"] = gridSubmesh;
+	geo->DrawArgs["sphere"] = sphereSubmesh;
+	geo->DrawArgs["cylinder"] = cylinderSubmesh;
+
+	mGeometries[geo->Name] = std::move(geo);
+}
+
 void PickingApp::BuildPSOs()
 {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC opaquePsoDesc;
@@ -823,6 +1082,10 @@ void PickingApp::BuildPSOs()
 	opaquePsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
 	opaquePsoDesc.DSVFormat = mDepthStencilFormat;
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&mPSOs["opaque"])));
+
+
+
+
 
 	//
 	// PSO for highlight objects
@@ -887,6 +1150,37 @@ void PickingApp::BuildPSOs()
 	};
 	sobelPSO.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
 	ThrowIfFailed(md3dDevice->CreateComputePipelineState(&sobelPSO, IID_PPV_ARGS(&mPSOs["sobel"])));
+
+
+	//
+	// PSO for sky.
+	//
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC skyPsoDesc = opaquePsoDesc;
+
+	// The camera is inside the sky sphere, so just turn off culling.
+	skyPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+	// Make sure the depth function is LESS_EQUAL and not just LESS.  
+	// Otherwise, the normalized depth values at z = 1 (NDC) will 
+	// fail the depth test if the depth buffer was cleared to 1.
+	skyPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+	skyPsoDesc.pRootSignature = mRootSignature.Get();
+	skyPsoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["skyVS"]->GetBufferPointer()),
+		mShaders["skyVS"]->GetBufferSize()
+	};
+	skyPsoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["skyPS"]->GetBufferPointer()),
+		mShaders["skyPS"]->GetBufferSize()
+	};
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&skyPsoDesc, IID_PPV_ARGS(&mPSOs["sky"])));
+
+
+
+	
+
 }
 
 void PickingApp::BuildFrameResources()
@@ -904,9 +1198,11 @@ void PickingApp::BuildMaterials()
 	gray0->Name = "gray0";
 	gray0->MatCBIndex = 0;
 	gray0->DiffuseSrvHeapIndex = 0;
-	gray0->DiffuseAlbedo = XMFLOAT4(0.7f, 0.7f, 0.7f, 1.0f);
+	gray0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
 	gray0->FresnelR0 = XMFLOAT3(0.04f, 0.04f, 0.04f);
-	gray0->Roughness = 0.0f;
+	gray0->Roughness = 0.2f;
+	gray0->Metalic = 0.0f;
+	gray0->Specular = 1.0f;
 
 	auto highlight0 = std::make_unique<Material>();
 	highlight0->Name = "highlight0";
@@ -916,24 +1212,37 @@ void PickingApp::BuildMaterials()
 	highlight0->FresnelR0 = XMFLOAT3(0.06f, 0.06f, 0.06f);
 	highlight0->Roughness = 0.0f;
 
+	auto sky = std::make_unique<Material>();
+	sky->Name = "sky";
+	sky->MatCBIndex = 2;
+	sky->DiffuseSrvHeapIndex = 1;
+	sky->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	sky->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
+	sky->Roughness = 1.0f;
+
 	
 	mMaterials["gray0"] = std::move(gray0);
 	mMaterials["highlight0"] = std::move(highlight0);
+	mMaterials["sky"] = std::move(sky);
 }
 
 void PickingApp::BuildRenderItems()
 {
+	
+
+
+
 	auto carRitem = std::make_unique<RenderItem>();
 	XMStoreFloat4x4(&carRitem->World, XMMatrixScaling(1.0f, 1.0f, 1.0f)*XMMatrixTranslation(0.0f, 1.0f, 0.0f));
 	XMStoreFloat4x4(&carRitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
 	carRitem->ObjCBIndex = 0;
 	carRitem->Mat = mMaterials["gray0"].get();
-	carRitem->Geo = mGeometries["carGeo"].get();
+	carRitem->Geo = mGeometries["customGeo"].get();
 	carRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	carRitem->Bounds = carRitem->Geo->DrawArgs["car"].Bounds;
-	carRitem->IndexCount = carRitem->Geo->DrawArgs["car"].IndexCount;
-	carRitem->StartIndexLocation = carRitem->Geo->DrawArgs["car"].StartIndexLocation;
-	carRitem->BaseVertexLocation = carRitem->Geo->DrawArgs["car"].BaseVertexLocation;
+	carRitem->Bounds = carRitem->Geo->DrawArgs["CustomMesh"].Bounds;
+	carRitem->IndexCount = carRitem->Geo->DrawArgs["CustomMesh"].IndexCount;
+	carRitem->StartIndexLocation = carRitem->Geo->DrawArgs["CustomMesh"].StartIndexLocation;
+	carRitem->BaseVertexLocation = carRitem->Geo->DrawArgs["CustomMesh"].BaseVertexLocation;
 	mRitemLayer[(int)RenderLayer::Opaque].push_back(carRitem.get());
 
 	auto pickedRitem = std::make_unique<RenderItem>();
@@ -941,7 +1250,7 @@ void PickingApp::BuildRenderItems()
 	pickedRitem->TexTransform = MathHelper::Identity4x4();
 	pickedRitem->ObjCBIndex = 1;
 	pickedRitem->Mat = mMaterials["highlight0"].get();
-	pickedRitem->Geo = mGeometries["carGeo"].get();
+	pickedRitem->Geo = mGeometries["customGeo"].get();
 	pickedRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 
 	// Picked triangle is not visible until one is picked.
@@ -953,6 +1262,21 @@ void PickingApp::BuildRenderItems()
 	pickedRitem->BaseVertexLocation = 0;
 	mPickedRitem = pickedRitem.get();
 	mRitemLayer[(int)RenderLayer::Highlight].push_back(pickedRitem.get());
+
+
+	auto skyRitem = std::make_unique<RenderItem>();
+	XMStoreFloat4x4(&skyRitem->World, XMMatrixScaling(5000.0f, 5000.0f, 5000.0f));
+	skyRitem->TexTransform = MathHelper::Identity4x4();
+	skyRitem->ObjCBIndex = 2;
+	skyRitem->Mat = mMaterials["sky"].get();
+	skyRitem->Geo = mGeometries["shapeGeo"].get();
+	skyRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	skyRitem->IndexCount = skyRitem->Geo->DrawArgs["sphere"].IndexCount;
+	skyRitem->StartIndexLocation = skyRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
+	skyRitem->BaseVertexLocation = skyRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
+
+	mRitemLayer[(int)RenderLayer::Sky].push_back(skyRitem.get());
+	mAllRitems.push_back(std::move(skyRitem));
 
 
 	mAllRitems.push_back(std::move(carRitem));
