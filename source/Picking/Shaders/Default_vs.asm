@@ -98,7 +98,6 @@
 // POSITION                 0   xyz         1     NONE   float   xyz 
 // NORMAL                   0   xyz         2     NONE   float   xyz 
 // TEXCOORD                 0   xy          3     NONE   float   xy  
-// TEXCOORD                 1   xyz         4     NONE   float   xyz 
 //
 vs_5_1
 dcl_globalFlags refactoringAllowed | skipOptimization
@@ -112,71 +111,65 @@ dcl_output_siv o0.xyzw, position
 dcl_output o1.xyz
 dcl_output o2.xyz
 dcl_output o3.xy
-dcl_output o4.xyz
-dcl_temps 8
+dcl_temps 7
 //
 // Initial variable locations:
 //   v0.x <- vin.PosL.x; v0.y <- vin.PosL.y; v0.z <- vin.PosL.z; 
 //   v1.x <- vin.NormalL.x; v1.y <- vin.NormalL.y; v1.z <- vin.NormalL.z; 
 //   v2.x <- vin.TexC.x; v2.y <- vin.TexC.y; 
-//   o4.x <- <VS return value>.PosL.x; o4.y <- <VS return value>.PosL.y; o4.z <- <VS return value>.PosL.z; 
 //   o3.x <- <VS return value>.TexC.x; o3.y <- <VS return value>.TexC.y; 
 //   o2.x <- <VS return value>.NormalW.x; o2.y <- <VS return value>.NormalW.y; o2.z <- <VS return value>.NormalW.z; 
 //   o1.x <- <VS return value>.PosW.x; o1.y <- <VS return value>.PosW.y; o1.z <- <VS return value>.PosW.z; 
 //   o0.x <- <VS return value>.PosH.x; o0.y <- <VS return value>.PosH.y; o0.z <- <VS return value>.PosH.z; o0.w <- <VS return value>.PosH.w
 //
-#line 24 "C:\Users\86187\Desktop\2020_demo_assets\MyD3DApp\source\Picking\Shaders\Default.hlsl"
-mov r0.xyz, l(0,0,0,0)  // r0.x <- vout.PosL.x; r0.y <- vout.PosL.y; r0.z <- vout.PosL.z
-
-#line 27
-ld_structured r1.x, CB0[0][8].x, l(40), T0[0].xxxx  // r1.x <- matData.MatTransform._m00
-ld_structured r2.x, CB0[0][8].x, l(56), T0[0].xxxx  // r2.x <- matData.MatTransform._m01
-ld_structured r1.y, CB0[0][8].x, l(44), T0[0].xxxx  // r1.y <- matData.MatTransform._m10
-ld_structured r2.y, CB0[0][8].x, l(60), T0[0].xxxx  // r2.y <- matData.MatTransform._m11
-ld_structured r1.z, CB0[0][8].x, l(48), T0[0].xxxx  // r1.z <- matData.MatTransform._m20
-ld_structured r2.z, CB0[0][8].x, l(64), T0[0].xxxx  // r2.z <- matData.MatTransform._m21
-ld_structured r1.w, CB0[0][8].x, l(52), T0[0].xxxx  // r1.w <- matData.MatTransform._m30
-ld_structured r2.w, CB0[0][8].x, l(68), T0[0].xxxx  // r2.w <- matData.MatTransform._m31
-
-#line 30
-mov r3.xyz, v0.xyzx
-mov r3.w, l(1.000000)
-dp4 r4.x, r3.xyzw, CB0[0][0].xyzw  // r4.x <- posW.x
-dp4 r4.y, r3.xyzw, CB0[0][1].xyzw  // r4.y <- posW.y
-dp4 r4.z, r3.xyzw, CB0[0][2].xyzw  // r4.z <- posW.z
-dp4 r4.w, r3.xyzw, CB0[0][3].xyzw  // r4.w <- posW.w
+#line 28 "C:\Users\86187\Desktop\2020_demo_assets\MyD3DApp\source\Picking\Shaders\Default.hlsl"
+ld_structured r0.x, CB0[0][8].x, l(40), T0[0].xxxx  // r0.x <- matData.MatTransform._m00
+ld_structured r1.x, CB0[0][8].x, l(56), T0[0].xxxx  // r1.x <- matData.MatTransform._m01
+ld_structured r0.y, CB0[0][8].x, l(44), T0[0].xxxx  // r0.y <- matData.MatTransform._m10
+ld_structured r1.y, CB0[0][8].x, l(60), T0[0].xxxx  // r1.y <- matData.MatTransform._m11
+ld_structured r0.z, CB0[0][8].x, l(48), T0[0].xxxx  // r0.z <- matData.MatTransform._m20
+ld_structured r1.z, CB0[0][8].x, l(64), T0[0].xxxx  // r1.z <- matData.MatTransform._m21
+ld_structured r0.w, CB0[0][8].x, l(52), T0[0].xxxx  // r0.w <- matData.MatTransform._m30
+ld_structured r1.w, CB0[0][8].x, l(68), T0[0].xxxx  // r1.w <- matData.MatTransform._m31
 
 #line 31
-mov r4.xyz, r4.xyzx  // r4.x <- vout.PosW.x; r4.y <- vout.PosW.y; r4.z <- vout.PosW.z
+mov r2.xyz, v0.xyzx
+mov r2.w, l(1.000000)
+dp4 r3.x, r2.xyzw, CB0[0][0].xyzw  // r3.x <- posW.x
+dp4 r3.y, r2.xyzw, CB0[0][1].xyzw  // r3.y <- posW.y
+dp4 r3.z, r2.xyzw, CB0[0][2].xyzw  // r3.z <- posW.z
+dp4 r3.w, r2.xyzw, CB0[0][3].xyzw  // r3.w <- posW.w
 
-#line 34
-dp3 r3.x, v1.xyzx, CB0[0][0].xyzx  // r3.x <- vout.NormalW.x
-dp3 r3.y, v1.xyzx, CB0[0][1].xyzx  // r3.y <- vout.NormalW.y
-dp3 r3.z, v1.xyzx, CB0[0][2].xyzx  // r3.z <- vout.NormalW.z
+#line 32
+mov r3.xyz, r3.xyzx  // r3.x <- vout.PosW.x; r3.y <- vout.PosW.y; r3.z <- vout.PosW.z
 
-#line 37
-dp4 r5.x, r4.xyzw, CB1[1][16].xyzw  // r5.x <- vout.PosH.x
-dp4 r5.y, r4.xyzw, CB1[1][17].xyzw  // r5.y <- vout.PosH.y
-dp4 r5.z, r4.xyzw, CB1[1][18].xyzw  // r5.z <- vout.PosH.z
-dp4 r5.w, r4.xyzw, CB1[1][19].xyzw  // r5.w <- vout.PosH.w
+#line 35
+dp3 r2.x, v1.xyzx, CB0[0][0].xyzx  // r2.x <- vout.NormalW.x
+dp3 r2.y, v1.xyzx, CB0[0][1].xyzx  // r2.y <- vout.NormalW.y
+dp3 r2.z, v1.xyzx, CB0[0][2].xyzx  // r2.z <- vout.NormalW.z
 
-#line 40
-mov r6.xy, v2.xyxx
-mov r6.zw, l(0,0,0,1.000000)
-dp4 r7.x, r6.xyzw, CB0[0][4].xyzw  // r7.x <- texC.x
-dp4 r7.y, r6.xyzw, CB0[0][5].xyzw  // r7.y <- texC.y
-dp4 r7.z, r6.xyzw, CB0[0][6].xyzw  // r7.z <- texC.z
-dp4 r7.w, r6.xyzw, CB0[0][7].xyzw  // r7.w <- texC.w
+#line 38
+dp4 r4.x, r3.xyzw, CB1[1][16].xyzw  // r4.x <- vout.PosH.x
+dp4 r4.y, r3.xyzw, CB1[1][17].xyzw  // r4.y <- vout.PosH.y
+dp4 r4.z, r3.xyzw, CB1[1][18].xyzw  // r4.z <- vout.PosH.z
+dp4 r4.w, r3.xyzw, CB1[1][19].xyzw  // r4.w <- vout.PosH.w
 
 #line 41
-dp4 r1.x, r7.xyzw, r1.xyzw  // r1.x <- vout.TexC.x
-dp4 r1.y, r7.xyzw, r2.xyzw  // r1.y <- vout.TexC.y
+mov r5.xy, v2.xyxx
+mov r5.zw, l(0,0,0,1.000000)
+dp4 r6.x, r5.xyzw, CB0[0][4].xyzw  // r6.x <- texC.x
+dp4 r6.y, r5.xyzw, CB0[0][5].xyzw  // r6.y <- texC.y
+dp4 r6.z, r5.xyzw, CB0[0][6].xyzw  // r6.z <- texC.z
+dp4 r6.w, r5.xyzw, CB0[0][7].xyzw  // r6.w <- texC.w
 
-#line 43
-mov o0.xyzw, r5.xyzw
-mov o1.xyz, r4.xyzx
-mov o2.xyz, r3.xyzx
-mov o4.xyz, r0.xyzx
-mov o3.xy, r1.xyxx
+#line 42
+dp4 r0.x, r6.xyzw, r0.xyzw  // r0.x <- vout.TexC.x
+dp4 r0.y, r6.xyzw, r1.xyzw  // r0.y <- vout.TexC.y
+
+#line 44
+mov o0.xyzw, r4.xyzw
+mov o1.xyz, r3.xyzx
+mov o2.xyz, r2.xyzx
+mov o3.xy, r0.xyxx
 ret 
-// Approximately 37 instruction slots used
+// Approximately 35 instruction slots used

@@ -233,7 +233,7 @@ bool PickingApp::Initialize()
 		mClientWidth, mClientHeight,
 		mBackBufferFormat);
 
-	BuildCubeFaceCamera(0.0f, 2.0f, 0.0f);
+	BuildCubeFaceCamera(0.0f, 20.0f, 0.0f);
 
 	mDynamicCubeMap = std::make_unique<CubeRenderTarget>(md3dDevice.Get(),
 		CubeMapSize, CubeMapSize, DXGI_FORMAT_R8G8B8A8_UNORM);
@@ -316,20 +316,7 @@ void PickingApp::Draw(const GameTimer& gt)
     // Reusing the command list reuses memory.
     ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
 
-    mCommandList->RSSetViewports(1, &mScreenViewport);
-    mCommandList->RSSetScissorRects(1, &mScissorRect);
-
-    // Indicate a state transition on the resource usage.
-	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mOffscreenRT->Resource(),
-		D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
-
-    // Clear the back buffer and depth buffer.
-    mCommandList->ClearRenderTargetView(mOffscreenRT->Rtv(), Colors::LightSteelBlue, 0, nullptr);
-    mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
-
-    // Specify the buffers we are going to render to.
-    mCommandList->OMSetRenderTargets(1, &mOffscreenRT->Rtv(), true, &DepthStencilView());
-
+	// set root signature.
 	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
 	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 
@@ -338,14 +325,16 @@ void PickingApp::Draw(const GameTimer& gt)
 	auto passCB = mCurrFrameResource->PassCB->Resource();
 	mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
 
+
+
 	// Bind all the materials used in this scene.  For structured buffers, we can bypass the heap and 
 	// set as a root descriptor.
 	auto matBuffer = mCurrFrameResource->MaterialBuffer->Resource();
 	mCommandList->SetGraphicsRootShaderResourceView(2, matBuffer->GetGPUVirtualAddress());
 
 	// Bind all the textures used in this scene.  Observe
-    // that we only have to specify the first descriptor in the table.  
-    // The root signature knows how many descriptors are expected in the table.
+	// that we only have to specify the first descriptor in the table.  
+	// The root signature knows how many descriptors are expected in the table.
 	mCommandList->SetGraphicsRootDescriptorTable(3, mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
 	// Bind the sky cube map.  For our demos, we just use one "world" cube map representing the environment
@@ -357,10 +346,32 @@ void PickingApp::Draw(const GameTimer& gt)
 	skyTexDescriptor.Offset(mSkyTexHeapIndex, mCbvSrvDescriptorSize);
 	mCommandList->SetGraphicsRootDescriptorTable(4, skyTexDescriptor);
 
+	
+    
 
-	/*DrawSceneToCubeMap();
+
+	DrawSceneToCubeMap();
+
+	//set viewport ****
 	mCommandList->RSSetViewports(1, &mScreenViewport);
-	mCommandList->RSSetScissorRects(1, &mScissorRect);*/
+	mCommandList->RSSetScissorRects(1, &mScissorRect);
+
+	// offscreen RT stage 
+	// 
+    // Indicate a state transition on the resource usage.
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mOffscreenRT->Resource(),
+		D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+
+    // Clear the back buffer and depth buffer.
+    mCommandList->ClearRenderTargetView(mOffscreenRT->Rtv(), Colors::LightSteelBlue, 0, nullptr);
+    mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+
+    // Specify the buffers we are going to render to.
+    mCommandList->OMSetRenderTargets(1, &mOffscreenRT->Rtv(), true, &DepthStencilView());
+
+	
+	mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
+	
 
     DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Opaque]);
 
@@ -376,12 +387,26 @@ void PickingApp::Draw(const GameTimer& gt)
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mOffscreenRT->Resource(),
 		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ));
 
+
+	
+	
+
+	//post sobel stage
+
 	mSobelFilter->Execute(mCommandList.Get(), mPostProcessRootSignature.Get(),
 		mPSOs["sobel"].Get(), mOffscreenRT->Srv());
 	
+
+
+	//merge to backbuffer stage
+	// 
 	// Indicate a state transition on the resource usage.
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
 		D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+
+	// Clear the back buffer and depth buffer.
+	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
+	mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
 	// Specify the buffers we are going to render to.
 	mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
@@ -402,7 +427,7 @@ void PickingApp::Draw(const GameTimer& gt)
 		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
 	
 
-    // Done recording commands.
+    // Done recording commands.******
     ThrowIfFailed(mCommandList->Close());
 
     // Add the command list to the queue for execution.
@@ -1252,7 +1277,7 @@ void PickingApp::BuildMaterials()
 	gray0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
 	gray0->FresnelR0 = XMFLOAT3(0.04f, 0.04f, 0.04f);
 	gray0->Roughness = 0.2f;
-	gray0->Metalic = 0.0f;
+	gray0->Metalic = 1.0f;
 	gray0->Specular = 1.0f;
 
 	auto highlight0 = std::make_unique<Material>();
