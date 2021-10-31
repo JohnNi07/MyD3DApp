@@ -1,3 +1,12 @@
 source/Picking/x64/**
 *.opendb
 *.exe
+source/Picking/.vs/Picking/v16/.suo
+source/Picking/.vs/Picking/v16/Browse.VC.db
+source/Picking/.vs/Picking/v16/Browse.VC.db-shm
+source/Picking/.vs/Picking/v16/Browse.VC.db-wal
+source/Picking/.vs/Picking/v16/ipch/AutoPCH/5951d2ac3a30f11f/RENDERTARGET.ipch
+source/Picking/.vs/Picking/v16/ipch/AutoPCH/6d09e47f774156b0/PICKINGAPP.ipch
+source/Picking/.vs/Picking/v16/ipch/AutoPCH/dcb7be35f2058a1d/D3DAPP.ipch
+source/Picking/.vs/Picking/v16/ipch/AutoPCH/e4080fc563bba6ef/SOBELFILTER.ipch
+source/Picking/.vs/Picking/v16/ipch/AutoPCH/ffe76927151f1e/CUBERENDERTARGET.ipch
