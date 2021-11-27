@@ -17,6 +17,8 @@ CubeRenderTarget::CubeRenderTarget(ID3D12Device* device,
 	mViewport = { 0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f };
 	mScissorRect = { 0, 0, (int)width, (int)height };
 
+	SHData.resize(mWidth * mHeight * 6);
+
 	BuildResource();
 }
 
@@ -79,10 +81,11 @@ void CubeRenderTarget::BuildDescriptors()
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	srvDesc.Format = mFormat;
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-	srvDesc.TextureCube.MostDetailedMip = 0;
-	srvDesc.TextureCube.MipLevels = 1;
-	srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+	srvDesc.Texture2DArray.MostDetailedMip = 0;
+	srvDesc.Texture2DArray.MipLevels = 1;
+	srvDesc.Texture2DArray.ResourceMinLODClamp = 0.0f;
+	srvDesc.Texture2DArray.ArraySize = 6;
 
 	// Create SRV to the entire cubemap resource.
 	md3dDevice->CreateShaderResourceView(mCubeMap.Get(), &srvDesc, mhCpuSrv);
@@ -136,4 +139,65 @@ void CubeRenderTarget::BuildResource()
 		D3D12_RESOURCE_STATE_GENERIC_READ,
 		nullptr,
 		IID_PPV_ARGS(&mCubeMap)));
+
+	UINT64 byteSize = SHData.size() * sizeof(prefilterData);
+
+	ThrowIfFailed(md3dDevice->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Buffer(byteSize,
+			D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
+		D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+		nullptr,
+		IID_PPV_ARGS(&mOutputBuffer)));
+
+	ThrowIfFailed(md3dDevice->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Buffer(byteSize),
+		D3D12_RESOURCE_STATE_COPY_DEST,
+		nullptr,
+		IID_PPV_ARGS(&mReadBackBuffer)));
+
+
+}
+void CubeRenderTarget::Execute(ID3D12GraphicsCommandList* cmdList,
+	ID3D12RootSignature* rootSig,
+	ID3D12PipelineState* pso,
+	CD3DX12_GPU_DESCRIPTOR_HANDLE input)
+{
+	cmdList->SetComputeRootSignature(rootSig);
+	cmdList->SetPipelineState(pso);
+
+	cmdList->SetComputeRootDescriptorTable(0, input);
+	cmdList->SetComputeRootUnorderedAccessView(1, mOutputBuffer->GetGPUVirtualAddress());
+
+	cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mOutputBuffer.Get(),
+		D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+
+	// How many groups do we need to dispatch to cover image, where each
+	// group covers 16x16 pixels.
+	UINT numGroupsX = (UINT)ceilf(mWidth / 16.0f);
+	UINT numGroupsY = (UINT)ceilf(mHeight / 16.0f);
+	cmdList->Dispatch(numGroupsX, numGroupsY, 6);
+
+	cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mOutputBuffer.Get(),
+		D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ));
+}
+void CubeRenderTarget::BuildSHCoe(ID3D12GraphicsCommandList* cmdList) {
+	cmdList->ResourceBarrier(1,
+		&CD3DX12_RESOURCE_BARRIER::Transition(
+			mOutputBuffer.Get(),
+			D3D12_RESOURCE_STATE_COMMON,
+			D3D12_RESOURCE_STATE_COPY_SOURCE));
+
+	cmdList->CopyResource(mReadBackBuffer.Get(),
+		mOutputBuffer.Get());
+
+	cmdList->ResourceBarrier(1,
+		&CD3DX12_RESOURCE_BARRIER::Transition(
+			mOutputBuffer.Get(),
+			D3D12_RESOURCE_STATE_COPY_SOURCE,
+			D3D12_RESOURCE_STATE_COMMON));
+
 }

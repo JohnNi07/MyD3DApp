@@ -29,3 +29,4 @@ source/Picking/Shaders/Sky_ps.asm
 source/Picking/Shaders/Sky_ps.cso
 source/Picking/Shaders/Sky_vs.asm
 source/Picking/Shaders/Sky_vs.cso
+*.ipch

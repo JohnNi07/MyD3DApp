@@ -16,6 +16,20 @@ enum class CubeMapFace : int
 	NegativeZ = 5
 };
 
+struct prefilterData
+{
+	DirectX::XMFLOAT3 c00;
+	DirectX::XMFLOAT3 c11;
+	DirectX::XMFLOAT3 c10;
+	DirectX::XMFLOAT3 c1minus1;
+	DirectX::XMFLOAT3 c21;
+	DirectX::XMFLOAT3 c2minus1;
+	DirectX::XMFLOAT3 c2minus2;
+	DirectX::XMFLOAT3 c20;
+	DirectX::XMFLOAT3 c22;
+};
+
+
 class CubeRenderTarget
 {
 public:
@@ -40,6 +54,16 @@ public:
 		CD3DX12_CPU_DESCRIPTOR_HANDLE hCpuRtv[6]);
 
 	void OnResize(UINT newWidth, UINT newHeight);
+	void Execute(ID3D12GraphicsCommandList* cmdList,
+		ID3D12RootSignature* rootSig,
+		ID3D12PipelineState* pso,
+		CD3DX12_GPU_DESCRIPTOR_HANDLE input);
+	void BuildSHCoe(ID3D12GraphicsCommandList* cmdList);
+
+
+	Microsoft::WRL::ComPtr<ID3D12Resource> mOutputBuffer = nullptr;
+	Microsoft::WRL::ComPtr<ID3D12Resource> mReadBackBuffer= nullptr;
+
 
 private:
 	void BuildDescriptors();
@@ -60,7 +84,13 @@ private:
 	CD3DX12_GPU_DESCRIPTOR_HANDLE mhGpuSrv;
 	CD3DX12_CPU_DESCRIPTOR_HANDLE mhCpuRtv[6];
 
+	
 	Microsoft::WRL::ComPtr<ID3D12Resource> mCubeMap = nullptr;
+
+
+	
+
+	std::vector<prefilterData> SHData;
 };
 
  

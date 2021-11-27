@@ -24,6 +24,16 @@ using namespace DirectX::PackedVector;
 const int gNumFrameResources = 3;
 const UINT CubeMapSize = 512;
 
+//prefileterDataUnion
+typedef union SHUnion
+{
+	prefilterData data;
+	
+	DirectX::XMFLOAT3 Array[9];
+
+};
+
+
 
 // Lightweight structure stores parameters to draw a shape.  This will
 // vary from app-to-app.
@@ -102,6 +112,7 @@ private:
 	void LoadTextures();
     void BuildRootSignature();
 	void BuildPostProcessRootSignature();
+	void BuildBakeSHRootSignature();
 	void BuildDescriptorHeaps();
 	void BuildCubeDepthStencil();
     void BuildShadersAndInputLayout();
@@ -117,6 +128,7 @@ private:
 	void Pick(int sx, int sy);
 	void DrawSceneToCubeMap();
 	void BuildCubeFaceCamera(float x, float y, float z);
+	void SaveSHToFile();
 
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 
@@ -135,6 +147,7 @@ private:
 
     ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
 	ComPtr<ID3D12RootSignature> mPostProcessRootSignature = nullptr;
+	ComPtr<ID3D12RootSignature> mBakeSHRootSignature = nullptr;
 
 	ComPtr<ID3D12DescriptorHeap> mSrvDescriptorHeap = nullptr;
 
@@ -170,6 +183,9 @@ private:
 	std::unique_ptr<CubeRenderTarget> mDynamicCubeMap = nullptr;
 	CD3DX12_CPU_DESCRIPTOR_HANDLE mCubeDSV;
 	ComPtr<ID3D12Resource> mCubeDepthStencilBuffer;
+
+
+	bool saveSwitch = false;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -241,6 +257,7 @@ bool PickingApp::Initialize()
 	LoadTextures();
     BuildRootSignature();
 	BuildPostProcessRootSignature();
+	BuildBakeSHRootSignature();
 	BuildDescriptorHeaps();
 	BuildCubeDepthStencil();
     BuildShadersAndInputLayout();
@@ -395,6 +412,12 @@ void PickingApp::Draw(const GameTimer& gt)
 
 	mSobelFilter->Execute(mCommandList.Get(), mPostProcessRootSignature.Get(),
 		mPSOs["sobel"].Get(), mOffscreenRT->Srv());
+
+	//
+	mDynamicCubeMap->Execute(mCommandList.Get(), mBakeSHRootSignature.Get(), mPSOs["BakeSH"].Get(), mDynamicCubeMap->Srv());
+
+	//
+	mDynamicCubeMap->BuildSHCoe(mCommandList.Get());
 	
 
 
@@ -433,6 +456,11 @@ void PickingApp::Draw(const GameTimer& gt)
     // Add the command list to the queue for execution.
     ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
     mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
+
+	if (saveSwitch)
+	{
+		SaveSHToFile();
+	}
 
     // Swap the back and front buffers
     ThrowIfFailed(mSwapChain->Present(0, 0));
@@ -498,6 +526,9 @@ void PickingApp::OnKeyboardInput(const GameTimer& gt)
 
 	if(GetAsyncKeyState('D') & 0x8000)
 		mCamera.Strafe(100.0f*dt);
+
+	if (GetAsyncKeyState('B') & 0x8000)
+		saveSwitch = true;
 
 	mCamera.UpdateViewMatrix();
 }
@@ -722,6 +753,49 @@ void PickingApp::BuildPostProcessRootSignature()
 		IID_PPV_ARGS(mPostProcessRootSignature.GetAddressOf())));
 }
 
+void PickingApp::BuildBakeSHRootSignature()
+{
+	CD3DX12_DESCRIPTOR_RANGE srvTable0;
+	srvTable0.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+
+
+
+
+
+	// Root parameter can be a table, root descriptor or root constants.
+	CD3DX12_ROOT_PARAMETER slotRootParameter[2];
+
+	// Perfomance TIP: Order from most frequent to least frequent.
+	slotRootParameter[0].InitAsDescriptorTable(1, &srvTable0);
+	slotRootParameter[1].InitAsUnorderedAccessView(0);
+
+
+	auto staticSamplers = GetStaticSamplers();
+
+	// A root signature is an array of root parameters.
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(2, slotRootParameter,
+		(UINT)staticSamplers.size(), staticSamplers.data(),
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	// create a root signature with a single slot which points to a descriptor range consisting of a single constant buffer
+	ComPtr<ID3DBlob> serializedRootSig = nullptr;
+	ComPtr<ID3DBlob> errorBlob = nullptr;
+	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+		serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
+
+	if (errorBlob != nullptr)
+	{
+		::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+	}
+	ThrowIfFailed(hr);
+
+	ThrowIfFailed(md3dDevice->CreateRootSignature(
+		0,
+		serializedRootSig->GetBufferPointer(),
+		serializedRootSig->GetBufferSize(),
+		IID_PPV_ARGS(mBakeSHRootSignature.GetAddressOf())));
+}
+
 void PickingApp::CreateRtvAndDsvDescriptorHeaps()
 {
 	// Add +1 descriptor for offscreen render target. +6 for cubemapRT
@@ -755,7 +829,7 @@ void PickingApp::BuildDescriptorHeaps()
 	// Create the SRV heap.
 	//
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 5+1;
+	srvHeapDesc.NumDescriptors = 1+1+1+1+2;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
@@ -809,12 +883,12 @@ void PickingApp::BuildDescriptorHeaps()
 		cubeRtvHandles);
 	
 	mOffscreenRT->BuildDescriptors(
-		GetCpuSrv(2+1),
-		GetGpuSrv(2+1),
+		GetCpuSrv(mDynamicTexHeapIndex +1),
+		GetGpuSrv(mDynamicTexHeapIndex +1),
 		GetRtv(2));
 	mSobelFilter->BuildDescriptors(
-		GetCpuSrv(3+1),
-		GetGpuSrv(3+1),
+		GetCpuSrv(mDynamicTexHeapIndex+2),
+		GetGpuSrv(mDynamicTexHeapIndex+2),
 		mCbvSrvDescriptorSize
 	);
 	
@@ -833,6 +907,8 @@ void PickingApp::BuildShadersAndInputLayout()
 	mShaders["compositeVS"] = d3dUtil::CompileShader(L"Shaders\\Composite.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["compositePS"] = d3dUtil::CompileShader(L"Shaders\\Composite.hlsl", nullptr, "PS", "ps_5_1");
 	mShaders["sobelCS"] = d3dUtil::CompileShader(L"Shaders\\Sobel.hlsl", nullptr, "SobelCS", "cs_5_1");
+
+	mShaders["BakeSHCS"] = d3dUtil::CompileShader(L"Shaders\\BakeSH.hlsl", nullptr, "BakeSHCS", "cs_5_1");
 
 	mShaders["skyVS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["skyPS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "PS", "ps_5_1");
@@ -1225,6 +1301,18 @@ void PickingApp::BuildPSOs()
 	};
 	sobelPSO.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
 	ThrowIfFailed(md3dDevice->CreateComputePipelineState(&sobelPSO, IID_PPV_ARGS(&mPSOs["sobel"])));
+
+
+	//pso for buildSH
+	D3D12_COMPUTE_PIPELINE_STATE_DESC bakeSHPSO = {};
+	bakeSHPSO.pRootSignature = mBakeSHRootSignature.Get();
+	bakeSHPSO.CS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["BakeSHCS"]->GetBufferPointer()),
+		mShaders["BakeSHCS"]->GetBufferSize()
+	};
+	bakeSHPSO.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+	ThrowIfFailed(md3dDevice->CreateComputePipelineState(&bakeSHPSO, IID_PPV_ARGS(&mPSOs["BakeSH"])));
 
 
 	//
@@ -1713,4 +1801,53 @@ CD3DX12_CPU_DESCRIPTOR_HANDLE PickingApp::GetRtv(int index)const
 	auto rtv = CD3DX12_CPU_DESCRIPTOR_HANDLE(mRtvHeap->GetCPUDescriptorHandleForHeapStart());
 	rtv.Offset(index, mRtvDescriptorSize);
 	return rtv;
+}
+
+void PickingApp::SaveSHToFile() {
+	if (saveSwitch) {
+
+
+		// Wait for the work to finish.
+		FlushCommandQueue();
+		// Map the data so we can read it on CPU.
+		prefilterData* mappedData = nullptr;
+
+		ThrowIfFailed(mDynamicCubeMap->mReadBackBuffer->Map(0, nullptr,
+			reinterpret_cast<void**>(&mappedData)));
+
+		SHUnion Udata;
+		SHUnion UdataNext;
+		Udata.data = mappedData[0];
+		std::ofstream fout("results.txt");
+		for (int i = 1; i < CubeMapSize * CubeMapSize * 6; ++i)
+		{
+			UdataNext.data = mappedData[i];
+			for (int j = 0; j < 9; ++j) 
+			{
+				Udata.Array[j].x += UdataNext.Array[j].x;
+				Udata.Array[j].y += UdataNext.Array[j].y;
+				Udata.Array[j].z += UdataNext.Array[j].z;
+			
+			}
+		}
+		
+
+		for (int j = 0; j < 9; ++j)
+		{
+			fout << "(" << Udata.Array[j].x << "," << Udata.Array[j].y << "," << Udata.Array[j].z << ")" << std::endl;
+			
+
+		}
+		/*fout << ¡°(¡± << mappedData[i].v1.x << ¡°, ¡± <<
+			mappedData[i].v1.y << ¡°, ¡± <<
+			mappedData[i].v1.z << ¡±, ¡± <<
+			mappedData[i].v2.x << ¡°, ¡± <<
+			mappedData[i].v2.y << ¡°)¡± << std::endl;*/
+		mDynamicCubeMap->mReadBackBuffer->Unmap(0, nullptr);
+
+		saveSwitch = false;
+
+
+	}
+
 }
