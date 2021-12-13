@@ -5,6 +5,7 @@
 #pragma once
 
 #include "../../Common/d3dUtil.h"
+#include "FrameResource.h"
 
 enum class CubeMapFace : int
 {
@@ -16,18 +17,7 @@ enum class CubeMapFace : int
 	NegativeZ = 5
 };
 
-struct prefilterData
-{
-	DirectX::XMFLOAT3 c00;
-	DirectX::XMFLOAT3 c11;
-	DirectX::XMFLOAT3 c10;
-	DirectX::XMFLOAT3 c1minus1;
-	DirectX::XMFLOAT3 c21;
-	DirectX::XMFLOAT3 c2minus1;
-	DirectX::XMFLOAT3 c2minus2;
-	DirectX::XMFLOAT3 c20;
-	DirectX::XMFLOAT3 c22;
-};
+
 
 
 class CubeRenderTarget

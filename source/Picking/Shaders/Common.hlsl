@@ -30,6 +30,20 @@ struct MaterialData
 	uint     MatPad2;
 };
 
+struct prefilterData
+{
+float3 c00;
+float3 c11;
+float3 c10;
+float3 c1minus1;
+float3 c21;
+float3 c2minus1;
+float3 c2minus2;
+float3 c20;
+float3 c22;
+};
+
+
 TextureCube gCubeMap : register(t0,space2);
 
 // An array of textures, which is only supported in shader model 5.1+.  Unlike Texture2DArray, the textures
@@ -39,6 +53,7 @@ Texture2D gDiffuseMap[4] : register(t1);
 // Put in space1, so the texture array does not overlap with these resources.  
 // The texture array will occupy registers t0, t1, ..., t3 in space0. 
 StructuredBuffer<MaterialData> gMaterialData : register(t0, space1);
+StructuredBuffer<prefilterData> gPrefilterData :register(t1,space1);
 
 
 SamplerState gsamPointWrap        : register(s0);

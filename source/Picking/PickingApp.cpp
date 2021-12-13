@@ -106,6 +106,7 @@ private:
 	void AnimateMaterials(const GameTimer& gt);
 	void UpdateObjectCBs(const GameTimer& gt);
 	void UpdateMaterialBuffer(const GameTimer& gt);
+	void UpdateSHBuffer(const GameTimer& gt);
 	void UpdateMainPassCB(const GameTimer& gt);
 	void UpdateCubeMapFacePassCBs();
 
@@ -117,6 +118,7 @@ private:
 	void BuildCubeDepthStencil();
     void BuildShadersAndInputLayout();
     void BuildCarGeometry();
+	void BuildPrefilterDataBuffer();
 	void BuildCustomGeometry();
 	void BuildShapeGeometry();
     void BuildPSOs();
@@ -153,12 +155,16 @@ private:
 
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
 	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
+	//std::unordered_map<std::string, std::unique_ptr<prefilterData>> mSHcoefficient;
 	std::unordered_map<std::string, std::unique_ptr<Texture>> mTextures;
 	std::unordered_map<std::string, ComPtr<ID3DBlob>> mShaders;
 	std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> mPSOs;
 
     std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
  
+	//SHCoe StrctureBuffer
+	std::vector<std::unique_ptr<SHStruct>> mSHcoefficient;
+
 	// List of all the render items.
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
 
@@ -264,6 +270,7 @@ bool PickingApp::Initialize()
 	BuildShapeGeometry();
     BuildCarGeometry();
 	BuildCustomGeometry();
+	BuildPrefilterDataBuffer();
 	BuildMaterials();
     BuildRenderItems();
     BuildFrameResources();
@@ -318,6 +325,7 @@ void PickingApp::Update(const GameTimer& gt)
 	AnimateMaterials(gt);
 	UpdateObjectCBs(gt);
 	UpdateMaterialBuffer(gt);
+	UpdateSHBuffer(gt);
 	UpdateMainPassCB(gt);
 }
 
@@ -592,6 +600,35 @@ void PickingApp::UpdateMaterialBuffer(const GameTimer& gt)
 	}
 }
 
+void PickingApp::UpdateSHBuffer(const GameTimer& gt)
+{
+	auto currSHBuffer = mCurrFrameResource->SHCoeBuffer.get();
+	for (UINT i = 0 ; i<mSHcoefficient.size();++i)
+	{
+		// Only update the cbuffer data if the constants have changed.  If the cbuffer
+		// data changes, it needs to be updated for each FrameResource.
+		
+		if (mSHcoefficient[i]->NumFramesDirty > 0)
+		{
+			
+			
+			/*MaterialData matData;
+			matData.DiffuseAlbedo = mat->DiffuseAlbedo;
+			matData.FresnelR0 = mat->FresnelR0;
+			matData.Roughness = mat->Roughness;
+			matData.Specular = mat->Specular;
+			matData.Metalic = mat->Metalic;
+			XMStoreFloat4x4(&matData.MatTransform, XMMatrixTranspose(matTransform));
+			matData.DiffuseMapIndex = mat->DiffuseSrvHeapIndex;*/
+
+			currSHBuffer->CopyData(i, mSHcoefficient[i]->Coefficient);
+
+			// Next FrameResource need to be updated too.
+			mSHcoefficient[i]->NumFramesDirty--;
+		}
+	}
+
+}
 void PickingApp::UpdateMainPassCB(const GameTimer& gt)
 {
 	XMMATRIX view = mCamera.GetView();
@@ -923,6 +960,7 @@ void PickingApp::BuildShadersAndInputLayout()
 }
 
 void PickingApp::BuildCarGeometry()
+
 {
 	std::ifstream fin("Models/car.txt");
 
@@ -1014,7 +1052,41 @@ void PickingApp::BuildCarGeometry()
 
 	mGeometries[geo->Name] = std::move(geo);
 }
+void PickingApp::BuildPrefilterDataBuffer()
+{
+	std::ifstream fin("results.txt");
 
+	if (!fin)
+	{
+		MessageBox(0, L"results.txt not found.", 0, 0);
+		return;
+	}
+	std::string ignore;
+	UINT  SHCount = 1;
+	std::vector<SHUnion> SHdata(SHCount);
+
+	for (UINT i = 0; i < SHCount; ++i)
+
+	{
+		for (UINT j = 0; j < 9; ++j)
+		{
+			fin >> ignore >> SHdata[i].Array[j].x >> SHdata[i].Array[j].y >> SHdata[i].Array[j].z >> ignore;
+		}
+
+
+	}
+	for (auto& e : SHdata)
+	{
+		auto SH = std::make_unique<SHStruct>();
+		SH->Coefficient = e.data;
+
+		mSHcoefficient.push_back(std::move(SH));
+	}
+	
+	
+	
+	
+}
 void PickingApp::BuildCustomGeometry()
 {
 	
@@ -1352,7 +1424,7 @@ void PickingApp::BuildFrameResources()
     {
 		// +6 for cubemapRT CB.
         mFrameResources.push_back(std::make_unique<FrameResource>(md3dDevice.Get(),
-            1+6, (UINT)mAllRitems.size(), (UINT)mMaterials.size()));
+            1+6, (UINT)mAllRitems.size(), (UINT)mMaterials.size(), (UINT)mSHcoefficient.size()));
     }
 }
 

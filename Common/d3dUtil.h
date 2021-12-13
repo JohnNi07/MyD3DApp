@@ -265,7 +265,27 @@ struct Material
 
 	DirectX::XMFLOAT4X4 MatTransform = MathHelper::Identity4x4();
 };
-
+struct prefilterData
+{
+	DirectX::XMFLOAT3 c00;
+	DirectX::XMFLOAT3 c11;
+	DirectX::XMFLOAT3 c10;
+	DirectX::XMFLOAT3 c1minus1;
+	DirectX::XMFLOAT3 c21;
+	DirectX::XMFLOAT3 c2minus1;
+	DirectX::XMFLOAT3 c2minus2;
+	DirectX::XMFLOAT3 c20;
+	DirectX::XMFLOAT3 c22;
+};
+struct SHStruct
+{
+	prefilterData Coefficient;
+	// Dirty flag indicating the material has changed and we need to update the constant buffer.
+	// Because we have a material constant buffer for each FrameResource, we have to apply the
+	// update to each FrameResource.  Thus, when we modify a material we should set 
+	// NumFramesDirty = gNumFrameResources so that each frame resource gets the update.
+	int NumFramesDirty = gNumFrameResources;
+};
 struct Texture
 {
 	// Unique material name for lookup.
